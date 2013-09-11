@@ -24,9 +24,22 @@
         <script src="backbone.merlin.js"></script>
 
         <script type="text/javascript">
-          var bm = new Backbone.Merlin.Base();
+          var bm = Backbone.Merlin.State.extend({
+            el: '#app',
 
-          console.log(bm);
+            layoutView: function(){
+
+            },
+
+            initialize: function(){
+                console.log('bm init');
+            },
+            stateName: function(){
+                'merlin test'
+            }
+          });
+
+          console.log(BaseState = new bm());
         </script>
 
     </body>

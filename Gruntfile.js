@@ -46,6 +46,7 @@ module.exports = function(grunt){
         src:  [
           'lib/merlin.js',
           'lib/merlin.slider.js',
+          'lib/merlin.log.js',
           'lib/merlin.base.js',
           'lib/merlin.state.js',
           'lib/merlin.connector.js'

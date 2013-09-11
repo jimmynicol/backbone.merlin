@@ -30,7 +30,29 @@ if (!_){
 }
 
 // Initialise the Merlin namespace
-Backbone.Merlin = {};
+Backbone.Merlin = {
+
+  // shamelessly lifted from Coffeescript's compiler
+  extends: function(child, parent) {
+    'use strict';
+
+    var __hasProp = {}.hasOwnProperty;
+
+    for (var key in parent) {
+      if (__hasProp.call(parent, key)) {
+        child[key] = parent[key];
+      }
+    }
+
+    function Ctor() { this.constructor = child; }
+    Ctor.prototype = parent.prototype;
+    child.prototype = new Ctor();
+    child._super = parent.prototype;
+
+    return child;
+  }
+
+};
 // merlin.slider.js
 
 
@@ -152,6 +174,53 @@ Backbone.Merlin.Slide = (function($, _){
   return Slide;
 
 })(Backbone.$, _);
+// merlin.log.js
+
+
+Backbone.Merlin.Log = (function(_){
+  'use strict';
+
+  function Log(){}
+
+  _.extend(Log.prototype, {
+
+    canLog: function(){
+      if (this._canLog === true){
+        return this._canLog;
+      }
+
+      if (/log=/.test(window.location.search)){
+        if (typeof console !== 'undefined'){
+          this._canLog = true;
+          return true;
+        }
+      }
+
+      return false;
+    },
+
+    logName: function(){
+      return this.constructor.name || 'something';
+    },
+
+    log: function(){
+      var slice, args;
+
+      if (!this.canLog()){
+        return;
+      }
+
+      slice = [].slice;
+      args  = [this.logName() + ':'].concat(slice.call(arguments));
+
+      console.log.apply(console, args);
+    }
+
+  });
+
+  return Log;
+
+})(_);
 // merlin.base.js
 
 
@@ -161,10 +230,13 @@ Backbone.Merlin.Base = (function(Backbone, $, _){
   function Base(options){
     this.options = options || {};
     this.$el = $(this.options.el);
+
+    this.log('something something');
   }
 
   _.extend(Base.prototype,
     Backbone.Merlin.Slide.prototype, // mixin the slide functionality
+    Backbone.Merlin.Log.prototype,   // add some logging features
     {}
   );
 
@@ -173,15 +245,195 @@ Backbone.Merlin.Base = (function(Backbone, $, _){
 })(Backbone, Backbone.$, _);
 // merlin.state.js
 
-Backbone.Merlin.State = (function(){
+Backbone.Merlin.State = (function(Backbone, $, _){
   'use strict';
 
-  function State(){
-  }
+
+  var State = function(options){
+    // run the parent constructor of the Backbone.View
+    State._super.constructor.apply(this, arguments);
+
+    this.options      = _.extend(this.defaultOptions(), options);
+    this.wizard       = this.wizard || this.options.wizard;
+    this.currentState = 'init';
+    this._initialised = false;
+
+    // this.el = this.options.el || (this.stateName() + '-state');
+
+    if (this.options.model) {
+      this.model = this.options.model;
+    }
+
+    this.renderLayout();
+    this.transitionListeners();
+
+    if (this.options.renderOnInit === true){
+      this.trigger('init');
+    }
+
+    this.log('State initialised!');
+
+  };
+
+  // extend the State prototype with Backbone View
+  Backbone.Merlin.extends(State, Backbone.View);
+
+  // add the rest of the methods along with the logging mixin
+  _.extend(State.prototype, Backbone.Merlin.Log.prototype, {
+
+    defaultOptions: function(){
+      return {
+        renderOnInitialisation: false,
+        transitions: ['init', 'show', 'hide', 'remove']
+      };
+    },
+
+    // Determine a name for the state, this must be overridden. FYI this
+    // method is not called 'name' due to collisions with existing methods,
+    // params
+    stateName: function(){
+      throw 'Not implemented: this state needs a name!';
+    },
+
+    // Render the base layout for the view, this is required
+    renderLayout: function(){
+      if (!this.layoutView){
+        throw 'A state needs a layout view to render';
+      }
+      this.$el
+        .html(this.layoutView())
+        .addClass('view-state');
+    },
+
+    // Add some listeners for the each of the transitions
+    transitionListeners: function(){
+      var _this = this;
+
+      this.on('init', function(){
+        _this.log('init triggered');
+        _this.beforeInit.apply(_this, arguments);
+        _this.renderViews();
+        _this.init.apply(_this, arguments);
+        _this._initialised = true;
+      });
+
+      this.on('show', function(){
+        if (!_this._initialised){
+          _this.beforeInit.apply(_this, arguments);
+          _this.renderViews();
+          _this.init.apply(_this, arguments);
+          _this._initialised = true;
+        }
+        _this.$el.addClass('show');
+        _this.$el.removeClass('hide');
+        _this.show.apply(_this, arguments);
+      });
+
+      this.on('hide', function(){
+        _this.$el.addClass('hide');
+        _this.$el.removeClass('show');
+        _this.hide.apply(_this, arguments);
+      });
+    },
+
+    // Views to initialise, listed by the selector target
+    renderViews: function(){
+      this.log('rendering ' + this.stateName() + ' views');
+    },
+
+    // Stub methods for the transition handlers
+    beforeInit: function(){},
+    afterInit:  function(){},
+    show:       function(){},
+    hide:       function(){},
+    remove:     function(){},
+    isComplete: function(){ return false; },
+    isBlocked:  function(){ return false; },
+  });
+
+
+  //   @on 'remove', =>
+  //     @log 'removed triggered'
+  //     @remove arguments...
+
+  //   # render the init state on load if required
+  //   @trigger 'init' if @options.renderOnInitialisation
+
+
+  // renderLayout: ->
+  //   @wizard
+  //     .workspace()
+  //     .append @base_template state: @el.replace('#','')
+  //   @$el = ($ @el)
+  //   @$el.addClass 'view-state'
+
+
+  // # Views to initialise, listed by the selector target
+  // views: {}
+  // renderViews: ->
+  //   @log "rendering '#{@stateName()}' views"
+
+  //   # render the specific view that contains the state layout
+  //   if @layout_view?
+  //     @layout_view = new @layout_view
+  //       el: @el
+  //       model: @model
+  //       state: @
+  //       wizard: @wizard
+  //       log: => @log arguments...
+
+  //   for el, view of @views
+  //     if el isnt @el and @$(el).length is 0
+  //       throw "Merlin: Cannot initialize state's view: the element selector '#{el}' was not found in the state's layout container. Make sure the selector matches the state's layout container '#{@el}', or the selector can be found from the previously rendered views. (element selector: '#{el or ''}', state name: '#{@stateName()}')"
+
+  //     # initialise the view and replace the class reference with an instance
+  //     @views[el] = new view
+  //       el: el
+  //       model: @model
+  //       state: @
+  //       wizard: @wizard
+  //       log: => @log arguments...
+
+  // # Convenience method for finding elements within the state
+  // $: (selector) -> @$el.find selector
+
+  // # Stub methods for the transition handlers
+  // beforeInit: ->
+  // init: ->
+  // show: ->
+  // hide: ->
+  // remove: ->
+  // isComplete: -> false
+  // isBlocked: -> false
+
+
+  // # Display overrides for the state name. Basically so that we can update the
+  // # name shown in the url and/or the navbar without messing with other code.
+  // friendlyName: -> @stateName()
+  // displayState: -> @makeUrlFriendly @friendlyName()
+
+
+  // # Take a str (most likely a friendlyName) and make it nice for URLs
+  // makeUrlFriendly: (str) ->
+  //   str.toLowerCase()
+  //     .replace(/[^a-z0-9\s]/g, '')
+  //     .replace(/(\s\s|\s)/gi, '-')
+
+
+  // # Show and/or create a state specific overlay
+  // showOverlay: (speed='fast') ->
+  //   if @$('> .overlay').length is 0
+  //     @$el.append '<div class="overlay"></div>'
+  //   @$('> .overlay').fadeIn speed
+
+
+  // # Hide the overlay
+  // hideOverlay: (speed='fast') -> @$('> .overlay').fadeOut speed
+
 
   return State;
 
-})(Backbone.$, _);
+})(Backbone, Backbone.$, _);
 // merlin.connector.js
 
 
