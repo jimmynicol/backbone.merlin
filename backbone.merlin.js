@@ -200,7 +200,7 @@ Backbone.Merlin.Log = (function(_){
     },
 
     logName: function(){
-      return this.constructor.name || 'something';
+      return this.constructor.name || this.stateName();
     },
 
     log: function(){
@@ -227,17 +227,99 @@ Backbone.Merlin.Log = (function(_){
 Backbone.Merlin.Base = (function(Backbone, $, _){
   'use strict';
 
+
   function Base(options){
     this.options = options || {};
     this.$el = $(this.options.el);
 
-    this.log('something something');
+    this.options.startOnInit = this.options.startOnInit || true;
+
+    this.routes = {};
+    this.initialisedStates = [];
+    this.stateNames = [];
+
+    this.log('Merlin Initialized');
   }
 
   _.extend(Base.prototype,
     Backbone.Merlin.Slide.prototype, // mixin the slide functionality
     Backbone.Merlin.Log.prototype,   // add some logging features
-    {}
+    {
+      $: function(selector){
+        return this.$el.find(selector);
+      },
+
+      // Placeholder for the state
+      states: {},
+
+      // Register all the listed states
+      registerStates: function(){
+        var _this = this;
+
+        this.initialisedStates = _.map(this.states, function(State, i){
+          var newState, name;
+
+          // initialize a state
+          newState = new State({
+            model: _this.model(),
+            wizard: _this
+          });
+
+          // find the routing name
+          name = newState.displayName();
+
+          // keep a list of the state names for use elsewhere
+          this.stateNames.push(name);
+
+          // if this is first state then add it as the root path
+          if (i === 0){
+            _this.routes[''] = name;
+          }
+
+          // add the path and any sub-paths
+          _this.routes[name] = name;
+          _this.routes['' + name + '/*path'] = name;
+
+          _this.log('\'' + name + '\' state registered');
+          return newState;
+        });
+      },
+
+      buildRouter: function(){
+        var _this = this;
+
+        this.router = new Backbone.Router({routes: this.routers});
+
+        // load helper routes for advancing to next/previous routes
+        this.router('next', 'next');
+        this.router('prev', 'prev');
+
+        Backbone.history.on('route', function(router, state, args){
+          switch(state){
+          case 'next':
+            _this.nextState();
+            break;
+          case 'prev':
+            _this.prevState();
+            break;
+          default:
+            if (_.indexOf(_this.stateNames, state) > -1){
+              this.stateChange(state, args[0][0]);
+            }
+          }
+        });
+
+        if (this.options.startOnInit){
+          Backbone.history.start();
+        }
+      },
+
+      // stateChange: function(stateName, path){
+
+      // },
+
+      extend: function(){ return _.extend; }
+    }
   );
 
   return Base;
@@ -249,37 +331,32 @@ Backbone.Merlin.State = (function(Backbone, $, _){
   'use strict';
 
 
-  var State = function(options){
-    // run the parent constructor of the Backbone.View
-    State._super.constructor.apply(this, arguments);
+  var State = Backbone.View.extend({
 
-    this.options      = _.extend(this.defaultOptions(), options);
-    this.wizard       = this.wizard || this.options.wizard;
-    this.currentState = 'init';
-    this._initialised = false;
+    constructor: function (options){
+      // run the parent constructor of the Backbone.View
+      /* jshint camelcase:false */
+      State.__super__.constructor.apply(this, arguments);
+      /* jshint camelcase:true */
 
-    // this.el = this.options.el || (this.stateName() + '-state');
+      this.options      = _.extend(this.defaultOptions(), options);
+      this.wizard       = this.wizard || this.options.wizard;
+      this.currentState = 'init';
+      this._initialised = false;
 
-    if (this.options.model) {
-      this.model = this.options.model;
-    }
+      if (this.options.model) {
+        this.model = this.options.model;
+      }
 
-    this.renderLayout();
-    this.transitionListeners();
+      this.renderLayout();
+      this.transitionListeners();
 
-    if (this.options.renderOnInit === true){
-      this.trigger('init');
-    }
+      if (this.options.renderOnInit === true){
+        this.trigger('init');
+      }
 
-    this.log('State initialised!');
-
-  };
-
-  // extend the State prototype with Backbone View
-  Backbone.Merlin.extends(State, Backbone.View);
-
-  // add the rest of the methods along with the logging mixin
-  _.extend(State.prototype, Backbone.Merlin.Log.prototype, {
+      this.log('State initialised!');
+    },
 
     defaultOptions: function(){
       return {
@@ -300,9 +377,7 @@ Backbone.Merlin.State = (function(Backbone, $, _){
       if (!this.layoutView){
         throw 'A state needs a layout view to render';
       }
-      this.$el
-        .html(this.layoutView())
-        .addClass('view-state');
+      this.$el.html(this.layoutView()).addClass('view-state');
     },
 
     // Add some listeners for the each of the transitions
@@ -337,8 +412,30 @@ Backbone.Merlin.State = (function(Backbone, $, _){
     },
 
     // Views to initialise, listed by the selector target
+    views: {},
+
+    // Render each of the listed views
     renderViews: function(){
+      var _this = this;
+
       this.log('rendering ' + this.stateName() + ' views');
+
+      _.forEach(this.views, function(View, elem){
+        this.views[elem] = new View({
+          el: elem,
+          model: this.model,
+          state: this,
+          wizard: this.wizard,
+          log: function(){ _this.log.apply(this, arguments); }
+        });
+      });
+    },
+
+    // Take a str (most likely a friendlyName) and make it nice for URLs
+    makeUrlFriendly: function(str){
+      return str.toLowerCase()
+              .replace(/[^a-z0-9\s]/g, '')
+              .replace(/(\s\s|\s)/gi, '-');
     },
 
     // Stub methods for the transition handlers
@@ -352,83 +449,8 @@ Backbone.Merlin.State = (function(Backbone, $, _){
   });
 
 
-  //   @on 'remove', =>
-  //     @log 'removed triggered'
-  //     @remove arguments...
-
-  //   # render the init state on load if required
-  //   @trigger 'init' if @options.renderOnInitialisation
-
-
-  // renderLayout: ->
-  //   @wizard
-  //     .workspace()
-  //     .append @base_template state: @el.replace('#','')
-  //   @$el = ($ @el)
-  //   @$el.addClass 'view-state'
-
-
-  // # Views to initialise, listed by the selector target
-  // views: {}
-  // renderViews: ->
-  //   @log "rendering '#{@stateName()}' views"
-
-  //   # render the specific view that contains the state layout
-  //   if @layout_view?
-  //     @layout_view = new @layout_view
-  //       el: @el
-  //       model: @model
-  //       state: @
-  //       wizard: @wizard
-  //       log: => @log arguments...
-
-  //   for el, view of @views
-  //     if el isnt @el and @$(el).length is 0
-  //       throw "Merlin: Cannot initialize state's view: the element selector '#{el}' was not found in the state's layout container. Make sure the selector matches the state's layout container '#{@el}', or the selector can be found from the previously rendered views. (element selector: '#{el or ''}', state name: '#{@stateName()}')"
-
-  //     # initialise the view and replace the class reference with an instance
-  //     @views[el] = new view
-  //       el: el
-  //       model: @model
-  //       state: @
-  //       wizard: @wizard
-  //       log: => @log arguments...
-
-  // # Convenience method for finding elements within the state
-  // $: (selector) -> @$el.find selector
-
-  // # Stub methods for the transition handlers
-  // beforeInit: ->
-  // init: ->
-  // show: ->
-  // hide: ->
-  // remove: ->
-  // isComplete: -> false
-  // isBlocked: -> false
-
-
-  // # Display overrides for the state name. Basically so that we can update the
-  // # name shown in the url and/or the navbar without messing with other code.
-  // friendlyName: -> @stateName()
-  // displayState: -> @makeUrlFriendly @friendlyName()
-
-
-  // # Take a str (most likely a friendlyName) and make it nice for URLs
-  // makeUrlFriendly: (str) ->
-  //   str.toLowerCase()
-  //     .replace(/[^a-z0-9\s]/g, '')
-  //     .replace(/(\s\s|\s)/gi, '-')
-
-
-  // # Show and/or create a state specific overlay
-  // showOverlay: (speed='fast') ->
-  //   if @$('> .overlay').length is 0
-  //     @$el.append '<div class="overlay"></div>'
-  //   @$('> .overlay').fadeIn speed
-
-
-  // # Hide the overlay
-  // hideOverlay: (speed='fast') -> @$('> .overlay').fadeOut speed
+  // Mixin the logging
+  _.extend(State.prototype, Backbone.Merlin.Log.prototype);
 
 
   return State;
